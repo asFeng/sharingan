@@ -83,7 +83,9 @@ class TestAttentionEntropy:
     def test_entropy_specific_layer(self, sample_result):
         """Test entropy for specific layer."""
         entropy = sample_result.attention_entropy(layer=1)
-        assert entropy.ndim == 1
+        # Returns [heads, seq_len] when only layer is specified
+        assert entropy.ndim == 2
+        assert entropy.shape == (8, 64)  # 8 heads, 64 seq
 
     def test_entropy_caching(self, sample_result):
         """Test that entropy is cached."""

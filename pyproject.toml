@@ -28,6 +28,7 @@ classifiers = [
 dependencies = [
     "torch>=2.0",
     "transformers>=4.37.0",
+    "accelerate>=0.20.0",
     "matplotlib>=3.7",
     "plotly>=5.18",
     "numpy>=1.24",

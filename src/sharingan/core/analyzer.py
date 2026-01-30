@@ -59,7 +59,7 @@ class Sharingan:
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
             cache_dir=self.config.cache_dir,
-            torch_dtype=self.dtype,
+            dtype=self.dtype,  # transformers 5.0+ uses dtype instead of torch_dtype
             device_map=self.device if self.device != "cpu" else None,
             attn_implementation="eager",  # Required for attention weights
             trust_remote_code=True,
