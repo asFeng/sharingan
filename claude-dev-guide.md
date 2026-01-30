@@ -47,9 +47,27 @@ sharingan/
 | Matplotlib heatmaps | ✅ Complete | Sharingan theme |
 | Plotly interactive | ✅ Complete | Hover info, zoom |
 | HTML export | ✅ Complete | Standalone with embedded data |
-| Gradio dashboard | ✅ Complete | All tabs working |
-| CLI | ✅ Complete | analyze, dashboard, info |
+| Gradio dashboard | ✅ Complete | All tabs working, file upload |
+| CLI | ✅ Complete | analyze, dashboard, info, --file option |
+| Generation viz | ✅ Complete | Boundary markers, gen→prompt/gen views |
 | Tests | ⚠️ Partial | Core tests done, need integration |
+
+## Recent Additions (v0.1.1)
+
+### File Input
+- CLI: `sharingan analyze --file input.txt`
+- Dashboard: File upload component for .txt/.md files
+
+### Generation Visualization
+- **Boundary markers**: Dashed lines separating prompt/generated regions
+- **Token labeling**: Format `index:content` with generated tokens in red
+- **Generation tab**: Shows gen→prompt and gen→gen attention separately
+- **Hover details**: Shows token type (Prompt/Generated) and full content
+
+### New Visualization Functions
+- `plot_generation_attention(result)` - Matplotlib gen→prompt and gen→gen heatmaps
+- `plot_token_attention_summary(result)` - Top receivers/givers, importance, entropy
+- `plot_generation_flow(result)` - Plotly interactive generation view
 
 ## Key Technical Decisions
 
