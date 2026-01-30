@@ -79,24 +79,47 @@ def load_model(model_name: str, progress=gr.Progress()) -> str:
         return f"✗ Error loading model: {str(e)}"
 
 
+def load_file(file_path: str | None) -> str:
+    """Load text from uploaded file."""
+    if file_path is None:
+        return ""
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+        return content
+    except Exception as e:
+        return f"Error loading file: {e}"
+
+
 def analyze_prompt(
     prompt: str,
+    file_path: str | None,
     generate: bool,
     max_tokens: int,
     progress=gr.Progress(),
-) -> tuple[str, go.Figure, go.Figure, str]:
+) -> tuple[str, go.Figure, go.Figure, go.Figure, str]:
     """Analyze a prompt and return visualizations."""
     global _current_result
+
+    # Use file content if provided
+    if file_path:
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                prompt = f.read().strip()
+        except Exception as e:
+            empty_fig = go.Figure()
+            empty_fig.update_layout(**SHARINGAN_TEMPLATE)
+            return f"Error reading file: {e}", empty_fig, empty_fig, empty_fig, ""
 
     if _current_analyzer is None:
         empty_fig = go.Figure()
         empty_fig.update_layout(**SHARINGAN_TEMPLATE)
-        return "Please load a model first", empty_fig, empty_fig, ""
+        return "Please load a model first", empty_fig, empty_fig, empty_fig, ""
 
     if not prompt.strip():
         empty_fig = go.Figure()
         empty_fig.update_layout(**SHARINGAN_TEMPLATE)
-        return "Please enter a prompt", empty_fig, empty_fig, ""
+        return "Please enter a prompt", empty_fig, empty_fig, empty_fig, ""
 
     progress(0, desc="Analyzing...")
 
@@ -116,30 +139,44 @@ def analyze_prompt(
         # Create entropy plot
         entropy_fig = create_entropy_figure(_current_result)
 
+        # Create generation attention figure
+        gen_fig = create_generation_figure(_current_result)
+
         # Summary text
         summary = _current_result.summary()
         summary_text = (
             f"**Layers:** {summary['num_layers']} | "
             f"**Heads:** {summary['num_heads']} | "
             f"**Sequence:** {summary['seq_len']} tokens\n\n"
+            f"**Prompt:** {_current_result.prompt_length} tokens | "
+            f"**Generated:** {_current_result.generated_length} tokens\n\n"
             f"**Mean Entropy:** {summary['mean_entropy']:.3f} | "
             f"**Attention Sinks:** {summary['num_sinks']}"
         )
 
-        # Tokens display
-        tokens_display = " ".join(
-            f"`{t}`" for t in _current_result.tokens[:100]
+        # Tokens display with prompt/generated marking
+        tokens = _current_result.tokens
+        prompt_len = _current_result.prompt_length
+        tokens_display = "**Prompt:** " + " ".join(
+            f"`{t}`" for t in tokens[:min(prompt_len, 50)]
         )
-        if len(_current_result.tokens) > 100:
-            tokens_display += f" ... (+{len(_current_result.tokens) - 100} more)"
+        if prompt_len > 50:
+            tokens_display += f" ... (+{prompt_len - 50} more)"
+
+        if _current_result.generated_length > 0:
+            tokens_display += "\n\n**Generated:** " + " ".join(
+                f"`{t}`" for t in tokens[prompt_len:prompt_len + 50]
+            )
+            if _current_result.generated_length > 50:
+                tokens_display += f" ... (+{_current_result.generated_length - 50} more)"
 
         progress(1.0, desc="Done!")
-        return summary_text, attn_fig, entropy_fig, tokens_display
+        return summary_text, attn_fig, entropy_fig, gen_fig, tokens_display
 
     except Exception as e:
         empty_fig = go.Figure()
         empty_fig.update_layout(**SHARINGAN_TEMPLATE)
-        return f"Error: {str(e)}", empty_fig, empty_fig, ""
+        return f"Error: {str(e)}", empty_fig, empty_fig, empty_fig, ""
 
 
 def create_attention_figure(
@@ -147,32 +184,137 @@ def create_attention_figure(
     layer: int | None = None,
     head: int | None = None,
 ) -> go.Figure:
-    """Create Plotly attention heatmap."""
+    """Create Plotly attention heatmap with token labels and generation boundary."""
     attention = result.get_attention(layer=layer, head=head, aggregate="mean")
+    tokens = result.tokens
+    prompt_len = result.prompt_length
 
     # Downsample if needed
+    downsampled = False
     if attention.shape[0] > 256:
         from sharingan.attention.downsampler import downsample_attention
 
         attention = downsample_attention(attention, target_size=256)
+        downsampled = True
+
+    # Create hover text with token info
+    if not downsampled and len(tokens) <= 100:
+        hover_text = []
+        for i in range(len(tokens)):
+            row = []
+            q_type = "P" if i < prompt_len else "G"
+            for j in range(len(tokens)):
+                k_type = "P" if j < prompt_len else "G"
+                row.append(
+                    f"Query [{i}] ({q_type}): {tokens[i]!r}<br>"
+                    f"Key [{j}] ({k_type}): {tokens[j]!r}<br>"
+                    f"Attention: {attention[i, j]:.4f}"
+                )
+            hover_text.append(row)
+
+        x_labels = [f"{i}:{t[:6]}" for i, t in enumerate(tokens)]
+        y_labels = x_labels
+    else:
+        hover_text = None
+        x_labels = None
+        y_labels = None
 
     fig = go.Figure(
         data=go.Heatmap(
             z=attention,
             colorscale=SHARINGAN_COLORSCALE,
-            hovertemplate="Query: %{y}<br>Key: %{x}<br>Attention: %{z:.4f}<extra></extra>",
+            hoverinfo="text" if hover_text else "z",
+            text=hover_text,
+            x=x_labels,
+            y=y_labels,
         )
     )
+
+    # Add generation boundary
+    if result.generated_length > 0 and not downsampled:
+        boundary = prompt_len - 0.5
+        fig.add_hline(y=boundary, line_dash="dash", line_color="#EF4444", line_width=2)
+        fig.add_vline(x=boundary, line_dash="dash", line_color="#EF4444", line_width=2)
 
     title = "Attention (Aggregated)"
     if layer is not None:
         title = f"Layer {layer}" + (f", Head {head}" if head is not None else "")
+    if result.generated_length > 0:
+        title += f" | P:{prompt_len} G:{result.generated_length}"
 
     fig.update_layout(
         title=title,
-        xaxis_title="Key Position",
-        yaxis_title="Query Position",
-        height=500,
+        xaxis_title="Key Position (attending to)",
+        yaxis_title="Query Position (attending from)",
+        height=550,
+        **SHARINGAN_TEMPLATE,
+    )
+    fig.update_yaxes(autorange="reversed")
+
+    return fig
+
+
+def create_generation_figure(result: AttentionResult) -> go.Figure:
+    """Create generation attention visualization."""
+    from plotly.subplots import make_subplots
+
+    if result.generated_length == 0:
+        # Return placeholder if no generation
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No generated tokens.<br>Enable 'Generate' to see generation attention.",
+            xref="paper", yref="paper", x=0.5, y=0.5,
+            showarrow=False, font=dict(size=14, color="#9CA3AF")
+        )
+        fig.update_layout(height=400, **SHARINGAN_TEMPLATE)
+        return fig
+
+    attention = result.get_attention(aggregate="mean")
+    prompt_len = result.prompt_length
+    gen_len = result.generated_length
+    tokens = result.tokens
+
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=["Generated → Prompt", "Generated → Generated"],
+        horizontal_spacing=0.12,
+    )
+
+    # Left: Generated attending to prompt
+    gen_to_prompt = attention[prompt_len:, :prompt_len]
+    prompt_labels = [f"{i}:{t[:6]}" for i, t in enumerate(tokens[:prompt_len])] if prompt_len <= 40 else None
+    gen_labels = [f"{i}:{t[:6]}" for i, t in enumerate(tokens[prompt_len:], start=prompt_len)] if gen_len <= 40 else None
+
+    fig.add_trace(
+        go.Heatmap(
+            z=gen_to_prompt,
+            x=prompt_labels,
+            y=gen_labels,
+            colorscale=SHARINGAN_COLORSCALE,
+            showscale=False,
+            hovertemplate="Gen→Prompt<br>Attention: %{z:.4f}<extra></extra>",
+        ),
+        row=1, col=1,
+    )
+
+    # Right: Generated attending to generated
+    gen_to_gen = attention[prompt_len:, prompt_len:]
+
+    fig.add_trace(
+        go.Heatmap(
+            z=gen_to_gen,
+            x=gen_labels,
+            y=gen_labels,
+            colorscale=SHARINGAN_COLORSCALE,
+            showscale=True,
+            hovertemplate="Gen→Gen<br>Attention: %{z:.4f}<extra></extra>",
+        ),
+        row=1, col=2,
+    )
+
+    fig.update_layout(
+        title=f"Generation Attention Flow (prompt: {prompt_len}, gen: {gen_len})",
+        height=450,
         **SHARINGAN_TEMPLATE,
     )
     fig.update_yaxes(autorange="reversed")
@@ -193,6 +335,14 @@ def create_entropy_figure(result: AttentionResult) -> go.Figure:
             fillcolor="rgba(239, 68, 68, 0.3)",
         )
     )
+
+    # Add generation boundary
+    if result.generated_length > 0:
+        fig.add_vline(
+            x=result.prompt_length - 0.5,
+            line_dash="dash", line_color="#EF4444",
+            annotation_text="Gen Start"
+        )
 
     fig.update_layout(
         title="Attention Entropy by Position",
@@ -273,6 +423,11 @@ def create_dashboard() -> gr.Blocks:
                     placeholder="Enter text to analyze...",
                     lines=3,
                 )
+                file_input = gr.File(
+                    label="Or upload text file",
+                    file_types=[".txt", ".md"],
+                    type="filepath",
+                )
 
                 with gr.Row():
                     generate_check = gr.Checkbox(label="Generate", value=False)
@@ -301,6 +456,10 @@ def create_dashboard() -> gr.Blocks:
                 with gr.Tabs():
                     with gr.Tab("Attention Map"):
                         attention_plot = gr.Plot(label="Attention Heatmap")
+
+                    with gr.Tab("Generation"):
+                        gr.Markdown("*Shows how generated tokens attend to prompt and each other*")
+                        generation_plot = gr.Plot(label="Generation Attention")
 
                     with gr.Tab("By Layer"):
                         with gr.Row():
@@ -333,8 +492,8 @@ def create_dashboard() -> gr.Blocks:
 
         analyze_btn.click(
             analyze_prompt,
-            inputs=[prompt_input, generate_check, max_tokens_input],
-            outputs=[summary_output, attention_plot, entropy_plot, tokens_output],
+            inputs=[prompt_input, file_input, generate_check, max_tokens_input],
+            outputs=[summary_output, attention_plot, entropy_plot, generation_plot, tokens_output],
         )
 
         layer_select.change(

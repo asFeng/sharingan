@@ -19,12 +19,18 @@ console = Console()
 
 @app.command()
 def analyze(
-    prompt: str = typer.Argument(..., help="Text to analyze"),
+    prompt: Optional[str] = typer.Argument(None, help="Text to analyze (or use --file)"),
     model: str = typer.Option(
         "Qwen/Qwen3-0.6B",
         "--model",
         "-m",
         help="HuggingFace model name or path",
+    ),
+    file: Optional[Path] = typer.Option(
+        None,
+        "--file",
+        "-f",
+        help="Read prompt from text file",
     ),
     output: Optional[Path] = typer.Option(
         None,
@@ -53,7 +59,6 @@ def analyze(
     head: Optional[int] = typer.Option(
         None,
         "--head",
-        "-h",
         help="Specific head to visualize",
     ),
     show: bool = typer.Option(
@@ -70,6 +75,17 @@ def analyze(
 ):
     """Analyze attention patterns for a prompt."""
     from sharingan import Sharingan
+
+    # Handle input from file or argument
+    if file:
+        if not file.exists():
+            console.print(f"[red]Error:[/red] File not found: {file}")
+            raise typer.Exit(1)
+        prompt = file.read_text().strip()
+        console.print(f"[dim]Loaded {len(prompt)} characters from {file}[/dim]")
+    elif not prompt:
+        console.print("[red]Error:[/red] Provide a prompt or use --file")
+        raise typer.Exit(1)
 
     with Progress(
         SpinnerColumn(style="red"),

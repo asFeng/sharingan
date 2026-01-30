@@ -37,6 +37,7 @@ def plot_interactive(
     width: int = 800,
     height: int = 800,
     show_tokens: bool = True,
+    show_generation_boundary: bool = True,
 ) -> go.Figure:
     """Create interactive Plotly attention heatmap.
 
@@ -48,6 +49,7 @@ def plot_interactive(
         width: Figure width in pixels
         height: Figure height in pixels
         show_tokens: Whether to show token labels
+        show_generation_boundary: Whether to mark prompt/generation boundary
 
     Returns:
         Plotly Figure with interactive heatmap
@@ -59,27 +61,45 @@ def plot_interactive(
     if level == "auto":
         level = "global" if seq_len > 256 else "local"
 
+    downsampled = False
     if level == "global" and seq_len > 256:
         from sharingan.attention.downsampler import downsample_attention
 
         attention = downsample_attention(attention, target_size=256)
         tokens = None
+        downsampled = True
     else:
         tokens = result.tokens if show_tokens else None
 
-    # Create hover text
+    # Create hover text with detailed token info
+    prompt_len = result.prompt_length
     if tokens:
-        hover_text = [
-            [f"Query: {tokens[i]}<br>Key: {tokens[j]}<br>Attention: {attention[i, j]:.4f}"
-             for j in range(len(tokens))]
-            for i in range(len(tokens))
-        ]
+        hover_text = []
+        for i in range(len(tokens)):
+            row = []
+            q_type = "Prompt" if i < prompt_len else "Generated"
+            for j in range(len(tokens)):
+                k_type = "Prompt" if j < prompt_len else "Generated"
+                row.append(
+                    f"<b>Query [{i}]:</b> {tokens[i]!r} ({q_type})<br>"
+                    f"<b>Key [{j}]:</b> {tokens[j]!r} ({k_type})<br>"
+                    f"<b>Attention:</b> {attention[i, j]:.4f}"
+                )
+            hover_text.append(row)
     else:
         hover_text = [
             [f"Query pos: {i}<br>Key pos: {j}<br>Attention: {attention[i, j]:.4f}"
              for j in range(attention.shape[1])]
             for i in range(attention.shape[0])
         ]
+
+    # Format tokens for axis labels (with index)
+    if tokens and len(tokens) <= 100:
+        x_labels = [f"{i}:{t[:8]}" for i, t in enumerate(tokens)]
+        y_labels = x_labels
+    else:
+        x_labels = None
+        y_labels = None
 
     # Create heatmap
     fig = go.Figure(
@@ -88,10 +108,24 @@ def plot_interactive(
             colorscale=SHARINGAN_COLORSCALE,
             hoverinfo="text",
             text=hover_text,
-            x=tokens if tokens and len(tokens) <= 100 else None,
-            y=tokens if tokens and len(tokens) <= 100 else None,
+            x=x_labels,
+            y=y_labels,
         )
     )
+
+    # Add generation boundary lines
+    if show_generation_boundary and result.generated_length > 0 and not downsampled:
+        boundary = prompt_len - 0.5
+        # Horizontal line
+        fig.add_hline(
+            y=boundary, line_dash="dash", line_color="#EF4444", line_width=2,
+            annotation_text="Gen Start", annotation_position="right",
+            annotation_font_color="#EF4444"
+        )
+        # Vertical line
+        fig.add_vline(
+            x=boundary, line_dash="dash", line_color="#EF4444", line_width=2
+        )
 
     # Title
     if layer is not None and head is not None:
@@ -101,16 +135,121 @@ def plot_interactive(
     else:
         title = "Attention (Aggregated)"
 
+    if result.generated_length > 0:
+        title += f" | Prompt: {prompt_len} | Generated: {result.generated_length}"
+
     fig.update_layout(
         title=dict(text=title, font=dict(size=16)),
-        xaxis_title="Key Position",
-        yaxis_title="Query Position",
+        xaxis_title="Key Position (attending to)",
+        yaxis_title="Query Position (attending from)",
         width=width,
         height=height,
         **SHARINGAN_TEMPLATE,
     )
 
     # Reverse y-axis to match matrix convention
+    fig.update_yaxes(autorange="reversed")
+
+    return fig
+
+
+def plot_generation_flow(
+    result: "AttentionResult",
+    layer: int | None = None,
+    head: int | None = None,
+    width: int = 1000,
+    height: int = 600,
+) -> go.Figure:
+    """Plot how generated tokens attend to prompt and each other.
+
+    Args:
+        result: AttentionResult object (must have generated tokens)
+        layer: Specific layer to plot
+        head: Specific head to plot
+        width: Figure width
+        height: Figure height
+
+    Returns:
+        Plotly Figure showing generation attention flow
+    """
+    if result.generated_length == 0:
+        raise ValueError("No generated tokens to visualize")
+
+    attention = result.get_attention(layer=layer, head=head, aggregate="mean")
+    prompt_len = result.prompt_length
+    gen_len = result.generated_length
+    tokens = result.tokens
+
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=["Generated → Prompt", "Generated → Generated"],
+        horizontal_spacing=0.1,
+    )
+
+    # Left: Generated attending to prompt
+    gen_to_prompt = attention[prompt_len:, :prompt_len]
+    prompt_tokens = [f"{i}:{t[:8]}" for i, t in enumerate(tokens[:prompt_len])]
+    gen_tokens = [f"{i}:{t[:8]}" for i, t in enumerate(tokens[prompt_len:], start=prompt_len)]
+
+    hover_left = [
+        [f"<b>Gen [{i+prompt_len}]:</b> {tokens[i+prompt_len]!r}<br>"
+         f"<b>→ Prompt [{j}]:</b> {tokens[j]!r}<br>"
+         f"<b>Attention:</b> {gen_to_prompt[i, j]:.4f}"
+         for j in range(prompt_len)]
+        for i in range(gen_len)
+    ]
+
+    fig.add_trace(
+        go.Heatmap(
+            z=gen_to_prompt,
+            x=prompt_tokens if prompt_len <= 50 else None,
+            y=gen_tokens if gen_len <= 50 else None,
+            colorscale=SHARINGAN_COLORSCALE,
+            hoverinfo="text",
+            text=hover_left,
+            showscale=False,
+        ),
+        row=1, col=1,
+    )
+
+    # Right: Generated attending to generated
+    gen_to_gen = attention[prompt_len:, prompt_len:]
+
+    hover_right = [
+        [f"<b>Gen [{i+prompt_len}]:</b> {tokens[i+prompt_len]!r}<br>"
+         f"<b>→ Gen [{j+prompt_len}]:</b> {tokens[j+prompt_len]!r}<br>"
+         f"<b>Attention:</b> {gen_to_gen[i, j]:.4f}"
+         for j in range(gen_len)]
+        for i in range(gen_len)
+    ]
+
+    fig.add_trace(
+        go.Heatmap(
+            z=gen_to_gen,
+            x=gen_tokens if gen_len <= 50 else None,
+            y=gen_tokens if gen_len <= 50 else None,
+            colorscale=SHARINGAN_COLORSCALE,
+            hoverinfo="text",
+            text=hover_right,
+            showscale=True,
+        ),
+        row=1, col=2,
+    )
+
+    title = "Generation Attention Flow"
+    if layer is not None:
+        title += f" (Layer {layer}"
+        if head is not None:
+            title += f", Head {head}"
+        title += ")"
+
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=16)),
+        width=width,
+        height=height,
+        **SHARINGAN_TEMPLATE,
+    )
+
     fig.update_yaxes(autorange="reversed")
 
     return fig
