@@ -17,8 +17,10 @@ Command-line interface using Typer with Rich for pretty output.
 1. `analyze` - Main analysis command
    ```bash
    sharingan analyze "prompt" --model MODEL -o output.html
+   sharingan analyze --file prompt.txt -o output.html
    ```
-   - Options: `--model/-m`, `--output/-o`, `--generate/-g`, `--max-tokens/-t`, `--layer/-l`, `--head/-h`, `--show/--no-show`, `--interactive/-i`
+   - Options: `--model/-m`, `--file/-f`, `--output/-o`, `--generate/-g`, `--max-tokens/-t`, `--layer/-l`, `--head/-h`, `--show/--no-show`, `--interactive/-i`, `--scale/-s`
+   - Scale methods: `none`, `sqrt` (default), `log`, `row`, `percentile`, `rank`
 
 2. `dashboard` - Launch Gradio dashboard
    ```bash
@@ -64,11 +66,19 @@ Uses Rich for styled terminal output:
 # Basic analysis
 sharingan analyze "Hello world" -o output.html
 
+# From file
+sharingan analyze --file prompt.txt -o output.html
+
 # With generation
 sharingan analyze "Once upon a time" -g -t 50 -o story.html
 
-# Specific layer/head
-sharingan analyze "Test" -l 5 -h 3 --interactive
+# Specific layer/head with scaling
+sharingan analyze "Test" -l 5 -h 3 --interactive --scale log
+
+# Different scaling methods (for long sequences)
+sharingan analyze "long text..." -s sqrt   # Square root (default)
+sharingan analyze "long text..." -s log    # Logarithmic
+sharingan analyze "long text..." -s row    # Row normalization
 
 # Launch dashboard
 sharingan dashboard -p 8080

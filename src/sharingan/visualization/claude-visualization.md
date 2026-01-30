@@ -11,9 +11,26 @@ Attention visualization using Matplotlib (static) and Plotly (interactive), plus
 
 ### heatmap.py
 **Functions**:
-- `plot_heatmap(result, layer, head, level, ...)` - Main matplotlib heatmap
+- `scale_attention(attention, method, percentile)` - Scale attention for better contrast
+- `plot_heatmap(result, layer, head, level, scale, ...)` - Main matplotlib heatmap
 - `plot_layer_summary(result, ...)` - Grid of all layers
 - `plot_entropy(result, ...)` - Entropy line plot
+
+**Attention Scaling** (solves faint colors with many tokens):
+```python
+ScaleMethod = Literal["none", "log", "sqrt", "row", "percentile", "rank"]
+
+scale_attention(attention, method="sqrt")  # Default
+```
+
+| Method | Description | Best for |
+|--------|-------------|----------|
+| `none` | Raw values | Short sequences |
+| `sqrt` | Square root (default) | General use |
+| `log` | Logarithmic | Emphasizing small differences |
+| `row` | Row-wise max=1 | Relative attention per query |
+| `percentile` | Clip to 98th | Removing outliers |
+| `rank` | Rank-based | Uniform color distribution |
 
 **Theme colors** (Sharingan-inspired):
 ```python
@@ -30,9 +47,12 @@ SHARINGAN_COLORS = {
 
 ### interactive.py
 **Functions**:
-- `plot_interactive(result, ...)` - Plotly heatmap with hover
+- `plot_interactive(result, layer, head, scale, ...)` - Plotly heatmap with hover
+- `plot_generation_flow(result, layer, head, scale, ...)` - Generated→Prompt/Generated attention
 - `plot_layer_head_grid(result, ...)` - Subplots grid
 - `plot_metrics_dashboard(result, ...)` - Multi-panel metrics
+
+**Note**: Hover text shows raw attention values even when scaling is applied.
 
 **Plotly colorscale**:
 ```python
@@ -66,13 +86,17 @@ from sharingan.visualization.heatmap import plot_heatmap
 from sharingan.visualization.interactive import plot_interactive
 
 if interactive:
-    return plot_interactive(self, layer, head, level)
+    return plot_interactive(self, layer, head, level, scale=scale)
 else:
-    return plot_heatmap(self, layer, head, level)
+    return plot_heatmap(self, layer, head, level, scale=scale)
 
 # In core/result.py (AttentionResult.to_html)
 from sharingan.visualization.html_export import export_html
 export_html(self, path, include_metrics)
+
+# CLI usage
+sharingan analyze "prompt" --scale sqrt
+sharingan analyze "prompt" -s log
 ```
 
 ## Auto Level Selection

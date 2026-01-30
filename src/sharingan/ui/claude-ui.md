@@ -16,14 +16,19 @@ Gradio-based interactive web dashboard for attention visualization.
 
 **Internal functions**:
 - `load_model(model_name)` - Load model into global state
-- `analyze_prompt(prompt, generate, max_tokens)` - Run analysis
-- `update_layer_view(layer, head)` - Update layer/head plot
+- `load_file(file_path)` - Load text from uploaded file
+- `analyze_prompt(prompt, file_path, generate, max_tokens, scale)` - Run analysis
+- `update_layer_view(layer, head)` - Update layer/head plot (uses current scale)
+- `create_attention_figure(result, layer, head, scale)` - Create Plotly heatmap
+- `create_generation_figure(result, scale)` - Show generated→prompt/generated attention
+- `create_entropy_figure(result)` - Entropy line plot
 - `export_html(output_path)` - Export current result
 
 **Global state** (not ideal, but works):
 ```python
 _current_analyzer: Sharingan | None = None
 _current_result: AttentionResult | None = None
+_current_scale: str = "sqrt"  # For layer view updates
 ```
 
 ## Dashboard Layout
@@ -32,18 +37,32 @@ _current_result: AttentionResult | None = None
 ┌─────────────────────────────────────────────────────┐
 │ [Sharingan Header - Red gradient]                   │
 ├──────────────┬──────────────────────────────────────┤
-│ Model Input  │                                      │
+│ Model Input  │  Summary: Layers | Heads | Seq len   │
 │ [Load]       │  ┌─────────────────────────────────┐ │
-│              │  │ Tabs: Attention | Layer | Metrics│ │
-│ Prompt Input │  ├─────────────────────────────────┤ │
+│              │  │ Tabs: Attention | Generation |  │ │
+│ Prompt Input │  │       By Layer | Metrics | Tokens│ │
+│ [File Upload]│  ├─────────────────────────────────┤ │
 │ [Generate ✓] │  │                                 │ │
 │ [Max Tokens] │  │    [Visualization Area]         │ │
+│ [Scale ▼]    │  │    (with generation boundary)   │ │
 │ [Analyze]    │  │                                 │ │
-│              │  │                                 │ │
-│ Export Path  │  └─────────────────────────────────┘ │
+│              │  └─────────────────────────────────┘ │
+│ Export Path  │                                      │
 │ [Export]     │                                      │
 └──────────────┴──────────────────────────────────────┘
 ```
+
+**Scale dropdown options**:
+- Square Root (recommended) - `sqrt`
+- Logarithmic - `log`
+- Row Normalized - `row`
+- Percentile Clip - `percentile`
+- Rank Based - `rank`
+- Raw (no scaling) - `none`
+
+**Generation tab**: Shows 2 heatmaps side-by-side:
+- Generated → Prompt (how gen tokens attend to prompt)
+- Generated → Generated (how gen tokens attend to each other)
 
 ## Theme CSS
 
