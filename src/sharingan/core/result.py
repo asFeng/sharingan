@@ -239,6 +239,7 @@ class AttentionResult:
         head: int | None = None,
         level: str = "auto",
         interactive: bool = False,
+        scale: str = "sqrt",
         **kwargs,
     ) -> "plt.Figure | go.Figure":
         """Plot attention heatmap.
@@ -248,6 +249,13 @@ class AttentionResult:
             head: Specific head to plot (None for aggregate)
             level: Visualization level ("global", "local", "auto")
             interactive: Whether to use Plotly for interactive visualization
+            scale: Scaling method for better contrast with many tokens
+                - "none": Raw values (may look faint)
+                - "sqrt": Square root (default, good balance)
+                - "log": Logarithmic (emphasizes small differences)
+                - "row": Row-wise normalization (max per row = 1)
+                - "percentile": Clip to 98th percentile
+                - "rank": Rank-based (uniform color distribution)
             **kwargs: Additional arguments passed to plotting function
 
         Returns:
@@ -256,11 +264,11 @@ class AttentionResult:
         if interactive:
             from sharingan.visualization.interactive import plot_interactive
 
-            return plot_interactive(self, layer=layer, head=head, level=level, **kwargs)
+            return plot_interactive(self, layer=layer, head=head, level=level, scale=scale, **kwargs)
         else:
             from sharingan.visualization.heatmap import plot_heatmap
 
-            return plot_heatmap(self, layer=layer, head=head, level=level, **kwargs)
+            return plot_heatmap(self, layer=layer, head=head, level=level, scale=scale, **kwargs)
 
     def to_html(self, path: str, include_metrics: bool = True) -> None:
         """Export visualization to standalone HTML file.

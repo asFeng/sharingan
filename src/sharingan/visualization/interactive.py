@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+
+from sharingan.visualization.heatmap import scale_attention, ScaleMethod
 
 if TYPE_CHECKING:
     from sharingan.core.result import AttentionResult
@@ -38,6 +40,7 @@ def plot_interactive(
     height: int = 800,
     show_tokens: bool = True,
     show_generation_boundary: bool = True,
+    scale: ScaleMethod = "sqrt",
 ) -> go.Figure:
     """Create interactive Plotly attention heatmap.
 
@@ -50,6 +53,7 @@ def plot_interactive(
         height: Figure height in pixels
         show_tokens: Whether to show token labels
         show_generation_boundary: Whether to mark prompt/generation boundary
+        scale: Scaling method ("none", "sqrt", "log", "row", "percentile", "rank")
 
     Returns:
         Plotly Figure with interactive heatmap
@@ -71,7 +75,13 @@ def plot_interactive(
     else:
         tokens = result.tokens if show_tokens else None
 
-    # Create hover text with detailed token info
+    # Store raw attention for hover text before scaling
+    raw_attention = attention.copy()
+
+    # Apply scaling for better contrast
+    attention = scale_attention(attention, method=scale)
+
+    # Create hover text with detailed token info (using raw values)
     prompt_len = result.prompt_length
     if tokens:
         hover_text = []
@@ -83,12 +93,12 @@ def plot_interactive(
                 row.append(
                     f"<b>Query [{i}]:</b> {tokens[i]!r} ({q_type})<br>"
                     f"<b>Key [{j}]:</b> {tokens[j]!r} ({k_type})<br>"
-                    f"<b>Attention:</b> {attention[i, j]:.4f}"
+                    f"<b>Attention:</b> {raw_attention[i, j]:.4f}"
                 )
             hover_text.append(row)
     else:
         hover_text = [
-            [f"Query pos: {i}<br>Key pos: {j}<br>Attention: {attention[i, j]:.4f}"
+            [f"Query pos: {i}<br>Key pos: {j}<br>Attention: {raw_attention[i, j]:.4f}"
              for j in range(attention.shape[1])]
             for i in range(attention.shape[0])
         ]
@@ -159,6 +169,7 @@ def plot_generation_flow(
     head: int | None = None,
     width: int = 1000,
     height: int = 600,
+    scale: ScaleMethod = "sqrt",
 ) -> go.Figure:
     """Plot how generated tokens attend to prompt and each other.
 
@@ -168,6 +179,7 @@ def plot_generation_flow(
         head: Specific head to plot
         width: Figure width
         height: Figure height
+        scale: Scaling method for attention values
 
     Returns:
         Plotly Figure showing generation attention flow
@@ -187,14 +199,16 @@ def plot_generation_flow(
     )
 
     # Left: Generated attending to prompt
-    gen_to_prompt = attention[prompt_len:, :prompt_len]
-    prompt_tokens = [f"{i}:{t[:8]}" for i, t in enumerate(tokens[:prompt_len])]
-    gen_tokens = [f"{i}:{t[:8]}" for i, t in enumerate(tokens[prompt_len:], start=prompt_len)]
+    gen_to_prompt_raw = attention[prompt_len:, :prompt_len]
+    gen_to_prompt = scale_attention(gen_to_prompt_raw, method=scale)
+    prompt_tokens = [f"{i}:{t[:8]}" for i, t in enumerate(tokens[:prompt_len])] if prompt_len <= 40 else None
+    gen_tokens = [f"{i}:{t[:8]}" for i, t in enumerate(tokens[prompt_len:], start=prompt_len)] if gen_len <= 40 else None
 
+    # Hover text uses raw values
     hover_left = [
         [f"<b>Gen [{i+prompt_len}]:</b> {tokens[i+prompt_len]!r}<br>"
          f"<b>→ Prompt [{j}]:</b> {tokens[j]!r}<br>"
-         f"<b>Attention:</b> {gen_to_prompt[i, j]:.4f}"
+         f"<b>Attention:</b> {gen_to_prompt_raw[i, j]:.4f}"
          for j in range(prompt_len)]
         for i in range(gen_len)
     ]
@@ -202,8 +216,8 @@ def plot_generation_flow(
     fig.add_trace(
         go.Heatmap(
             z=gen_to_prompt,
-            x=prompt_tokens if prompt_len <= 50 else None,
-            y=gen_tokens if gen_len <= 50 else None,
+            x=prompt_tokens,
+            y=gen_tokens,
             colorscale=SHARINGAN_COLORSCALE,
             hoverinfo="text",
             text=hover_left,
@@ -213,12 +227,13 @@ def plot_generation_flow(
     )
 
     # Right: Generated attending to generated
-    gen_to_gen = attention[prompt_len:, prompt_len:]
+    gen_to_gen_raw = attention[prompt_len:, prompt_len:]
+    gen_to_gen = scale_attention(gen_to_gen_raw, method=scale)
 
     hover_right = [
         [f"<b>Gen [{i+prompt_len}]:</b> {tokens[i+prompt_len]!r}<br>"
          f"<b>→ Gen [{j+prompt_len}]:</b> {tokens[j+prompt_len]!r}<br>"
-         f"<b>Attention:</b> {gen_to_gen[i, j]:.4f}"
+         f"<b>Attention:</b> {gen_to_gen_raw[i, j]:.4f}"
          for j in range(gen_len)]
         for i in range(gen_len)
     ]
@@ -226,8 +241,8 @@ def plot_generation_flow(
     fig.add_trace(
         go.Heatmap(
             z=gen_to_gen,
-            x=gen_tokens if gen_len <= 50 else None,
-            y=gen_tokens if gen_len <= 50 else None,
+            x=gen_tokens,
+            y=gen_tokens,
             colorscale=SHARINGAN_COLORSCALE,
             hoverinfo="text",
             text=hover_right,

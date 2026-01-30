@@ -12,6 +12,7 @@ from sharingan.visualization.interactive import (
     SHARINGAN_COLORSCALE,
     SHARINGAN_TEMPLATE,
 )
+from sharingan.visualization.heatmap import scale_attention
 
 # Sharingan theme CSS
 THEME_CSS = """
@@ -58,6 +59,7 @@ THEME_CSS = """
 # Global state
 _current_analyzer: Sharingan | None = None
 _current_result: AttentionResult | None = None
+_current_scale: str = "sqrt"
 
 
 def load_model(model_name: str, progress=gr.Progress()) -> str:
@@ -96,10 +98,12 @@ def analyze_prompt(
     file_path: str | None,
     generate: bool,
     max_tokens: int,
+    scale: str,
     progress=gr.Progress(),
 ) -> tuple[str, go.Figure, go.Figure, go.Figure, str]:
     """Analyze a prompt and return visualizations."""
-    global _current_result
+    global _current_result, _current_scale
+    _current_scale = scale  # Store for layer view updates
 
     # Use file content if provided
     if file_path:
@@ -134,13 +138,13 @@ def analyze_prompt(
         progress(0.7, desc="Creating visualizations...")
 
         # Create attention heatmap
-        attn_fig = create_attention_figure(_current_result)
+        attn_fig = create_attention_figure(_current_result, scale=scale)
 
         # Create entropy plot
         entropy_fig = create_entropy_figure(_current_result)
 
         # Create generation attention figure
-        gen_fig = create_generation_figure(_current_result)
+        gen_fig = create_generation_figure(_current_result, scale=scale)
 
         # Summary text
         summary = _current_result.summary()
@@ -183,6 +187,7 @@ def create_attention_figure(
     result: AttentionResult,
     layer: int | None = None,
     head: int | None = None,
+    scale: str = "sqrt",
 ) -> go.Figure:
     """Create Plotly attention heatmap with token labels and generation boundary."""
     attention = result.get_attention(layer=layer, head=head, aggregate="mean")
@@ -197,7 +202,13 @@ def create_attention_figure(
         attention = downsample_attention(attention, target_size=256)
         downsampled = True
 
-    # Create hover text with token info
+    # Store raw attention for hover text before scaling
+    raw_attention = attention.copy()
+
+    # Apply scaling for better contrast
+    attention = scale_attention(attention, method=scale)
+
+    # Create hover text with token info (using raw values)
     if not downsampled and len(tokens) <= 100:
         hover_text = []
         for i in range(len(tokens)):
@@ -208,7 +219,7 @@ def create_attention_figure(
                 row.append(
                     f"Query [{i}] ({q_type}): {tokens[i]!r}<br>"
                     f"Key [{j}] ({k_type}): {tokens[j]!r}<br>"
-                    f"Attention: {attention[i, j]:.4f}"
+                    f"Attention: {raw_attention[i, j]:.4f}"
                 )
             hover_text.append(row)
 
@@ -254,7 +265,7 @@ def create_attention_figure(
     return fig
 
 
-def create_generation_figure(result: AttentionResult) -> go.Figure:
+def create_generation_figure(result: AttentionResult, scale: str = "sqrt") -> go.Figure:
     """Create generation attention visualization."""
     from plotly.subplots import make_subplots
 
@@ -282,6 +293,7 @@ def create_generation_figure(result: AttentionResult) -> go.Figure:
 
     # Left: Generated attending to prompt
     gen_to_prompt = attention[prompt_len:, :prompt_len]
+    gen_to_prompt = scale_attention(gen_to_prompt, method=scale)
     prompt_labels = [f"{i}:{t[:6]}" for i, t in enumerate(tokens[:prompt_len])] if prompt_len <= 40 else None
     gen_labels = [f"{i}:{t[:6]}" for i, t in enumerate(tokens[prompt_len:], start=prompt_len)] if gen_len <= 40 else None
 
@@ -299,6 +311,7 @@ def create_generation_figure(result: AttentionResult) -> go.Figure:
 
     # Right: Generated attending to generated
     gen_to_gen = attention[prompt_len:, prompt_len:]
+    gen_to_gen = scale_attention(gen_to_gen, method=scale)
 
     fig.add_trace(
         go.Heatmap(
@@ -363,7 +376,7 @@ def update_layer_view(layer: int, head: str) -> go.Figure:
         return fig
 
     head_idx = None if head == "All (mean)" else int(head.split()[-1])
-    return create_attention_figure(_current_result, layer=int(layer), head=head_idx)
+    return create_attention_figure(_current_result, layer=int(layer), head=head_idx, scale=_current_scale)
 
 
 def export_html(output_path: str) -> str:
@@ -439,6 +452,19 @@ def create_dashboard() -> gr.Blocks:
                         step=1,
                     )
 
+                scale_select = gr.Dropdown(
+                    label="Color Scale",
+                    choices=[
+                        ("Square Root (recommended)", "sqrt"),
+                        ("Logarithmic", "log"),
+                        ("Row Normalized", "row"),
+                        ("Percentile Clip", "percentile"),
+                        ("Rank Based", "rank"),
+                        ("Raw (no scaling)", "none"),
+                    ],
+                    value="sqrt",
+                )
+
                 analyze_btn = gr.Button("Analyze", variant="primary")
 
                 gr.Markdown("### Export")
@@ -492,7 +518,7 @@ def create_dashboard() -> gr.Blocks:
 
         analyze_btn.click(
             analyze_prompt,
-            inputs=[prompt_input, file_input, generate_check, max_tokens_input],
+            inputs=[prompt_input, file_input, generate_check, max_tokens_input, scale_select],
             outputs=[summary_output, attention_plot, entropy_plot, generation_plot, tokens_output],
         )
 

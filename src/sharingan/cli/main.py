@@ -72,6 +72,12 @@ def analyze(
         "-i",
         help="Use interactive Plotly visualization",
     ),
+    scale: str = typer.Option(
+        "sqrt",
+        "--scale",
+        "-s",
+        help="Scaling method: none, sqrt, log, row, percentile, rank",
+    ),
 ):
     """Analyze attention patterns for a prompt."""
     from sharingan import Sharingan
@@ -135,7 +141,7 @@ def analyze(
             result.to_html(str(output))
             console.print(f"[green]✓[/green] Exported to {output}")
         else:
-            fig = result.plot(layer=layer, head=head, interactive=interactive)
+            fig = result.plot(layer=layer, head=head, interactive=interactive, scale=scale)
             if hasattr(fig, "savefig"):
                 fig.savefig(str(output), dpi=150, bbox_inches="tight")
             else:
@@ -144,12 +150,12 @@ def analyze(
 
     if show and not output:
         if interactive:
-            fig = result.plot(layer=layer, head=head, interactive=True)
+            fig = result.plot(layer=layer, head=head, interactive=True, scale=scale)
             fig.show()
         else:
             import matplotlib.pyplot as plt
 
-            result.plot(layer=layer, head=head)
+            result.plot(layer=layer, head=head, scale=scale)
             plt.show()
 
 

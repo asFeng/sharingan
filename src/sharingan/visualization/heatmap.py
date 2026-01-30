@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -19,6 +19,66 @@ SHARINGAN_COLORS = {
     "background": "#111827",
     "text": "#F9FAFB",
 }
+
+# Scaling methods for attention visualization
+ScaleMethod = Literal["none", "log", "sqrt", "row", "percentile", "rank"]
+
+
+def scale_attention(
+    attention: np.ndarray,
+    method: ScaleMethod = "none",
+    percentile: float = 98,
+) -> np.ndarray:
+    """Scale attention values for better visualization.
+
+    Args:
+        attention: Attention matrix [seq, seq]
+        method: Scaling method
+            - "none": No scaling (raw values)
+            - "log": Log scale (log(1 + x * 100))
+            - "sqrt": Square root scaling
+            - "row": Row-wise normalization (max per row = 1)
+            - "percentile": Clip to percentile and normalize
+            - "rank": Rank-based scaling (uniform distribution)
+        percentile: Percentile for clipping (used with "percentile" method)
+
+    Returns:
+        Scaled attention values in [0, 1] range
+    """
+    if method == "none":
+        return attention
+
+    attn = attention.copy()
+
+    if method == "log":
+        # Log scale: emphasizes differences in small values
+        attn = np.log1p(attn * 100)  # log(1 + x*100)
+        attn = attn / attn.max() if attn.max() > 0 else attn
+
+    elif method == "sqrt":
+        # Square root: moderate compression
+        attn = np.sqrt(attn)
+        attn = attn / attn.max() if attn.max() > 0 else attn
+
+    elif method == "row":
+        # Row-wise normalization: each row's max becomes 1
+        row_max = attn.max(axis=1, keepdims=True)
+        row_max = np.where(row_max == 0, 1, row_max)
+        attn = attn / row_max
+
+    elif method == "percentile":
+        # Clip to percentile and normalize
+        threshold = np.percentile(attn, percentile)
+        attn = np.clip(attn, 0, threshold)
+        attn = attn / threshold if threshold > 0 else attn
+
+    elif method == "rank":
+        # Rank-based: convert to percentile ranks
+        flat = attn.flatten()
+        ranks = np.argsort(np.argsort(flat))
+        attn = (ranks / len(ranks)).reshape(attn.shape)
+
+    return attn
 
 
 def get_sharingan_cmap():
@@ -40,6 +100,7 @@ def plot_heatmap(
     ax: plt.Axes | None = None,
     show_generation_boundary: bool = True,
     token_format: str = "content",  # "content", "index", "both"
+    scale: ScaleMethod = "sqrt",  # Scaling method for better contrast
 ) -> plt.Figure:
     """Plot attention heatmap using matplotlib.
 
@@ -56,6 +117,13 @@ def plot_heatmap(
         ax: Existing axes to plot on
         show_generation_boundary: Whether to mark prompt/generation boundary
         token_format: How to format token labels ("content", "index", "both")
+        scale: Scaling method for attention values
+            - "none": Raw values (may look faint with many tokens)
+            - "sqrt": Square root (default, good balance)
+            - "log": Logarithmic (emphasizes small differences)
+            - "row": Row-wise normalization (max per row = 1)
+            - "percentile": Clip to 98th percentile
+            - "rank": Rank-based (uniform color distribution)
 
     Returns:
         Matplotlib Figure
@@ -77,6 +145,9 @@ def plot_heatmap(
         downsampled = True
     else:
         tokens_to_show = result.tokens if show_tokens else None
+
+    # Apply scaling for better contrast
+    attention = scale_attention(attention, method=scale)
 
     # Create figure if needed
     if ax is None:
